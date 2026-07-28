@@ -32,7 +32,34 @@ if (!data || data.items.length !== 245) {
 if (new Set(data.items.map((item) => item.id)).size !== data.items.length) {
   throw new Error("checklist IDs are not unique");
 }
+const sheetRows = data.items.map((item) => item.sheetRow);
+if (!sheetRows.every(Number.isInteger)) {
+  throw new Error("every checklist gate must map to an integer tracker row");
+}
+if (new Set(sheetRows).size !== data.items.length) {
+  throw new Error("tracker row mappings are not unique");
+}
+
+const html = fs.readFileSync(path.join(assets, "index.html"), "utf8");
+for (const marker of [
+  'id="tracker-view"',
+  'id="sheet-frame"',
+  'data-sheet-tab="checklist"',
+  'data-sheet-tab="dashboard"',
+  'data-sheet-tab="guide"',
+]) {
+  if (!html.includes(marker)) {
+    throw new Error(`integrated tracker markup missing: ${marker}`);
+  }
+}
+
+const app = fs.readFileSync(path.join(assets, "app.js"), "utf8");
+for (const marker of ["openTracker(Number(link.dataset.sheetRow))", "sheetEmbedUrl", "#tracker"]) {
+  if (!app.includes(marker)) {
+    throw new Error(`integrated tracker behavior missing: ${marker}`);
+  }
+}
 
 console.log(
-  `validated ${data.items.length} unique gates across ${new Set(data.items.map((item) => item.section)).size} sections`,
+  `validated ${data.items.length} unique gates and tracker rows across ${new Set(data.items.map((item) => item.section)).size} sections`,
 );

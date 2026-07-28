@@ -2,9 +2,11 @@
 
 Internal launch-control page for the Star Atlas C4 mainnet readiness checklist.
 
-- The site is a fast, filterable read-only view of the launch baseline.
-- The linked Google Sheet is the collaborative source for status, owner, dates,
-  evidence, and notes.
+- The Board view is a fast, filterable view of the launch baseline.
+- The Live Tracker view embeds the shared Google Sheet, so signed-in Star Atlas
+  teammates can update status, owner, dates, evidence, and notes without leaving
+  the page.
+- Every gate's **Update live** control opens its exact tracker row.
 - The sheet is shared as editor with the `staratlas.com` domain.
 
 ## Local workflow

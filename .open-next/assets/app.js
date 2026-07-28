@@ -9,15 +9,19 @@
   }
 
   const sheetUrl = `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit?usp=sharing`;
-  const sheetEmbedUrl =
-    `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit` +
-    `?rm=minimal&single=true&gid=${data.sheet.checklistGid}&widget=true&headers=false&embedded=true`;
+  const sheetTabs = {
+    checklist: data.sheet.checklistGid,
+    dashboard: data.sheet.dashboardGid,
+    guide: data.sheet.guideGid,
+  };
 
   const state = {
     query: "",
     priority: "ALL",
     section: null,
     density: localStorage.getItem("c4-density") || "comfortable",
+    surface: window.location.hash === "#tracker" ? "tracker" : "board",
+    trackerTab: "checklist",
   };
 
   const $ = (selector) => document.querySelector(selector);
@@ -27,7 +31,10 @@
   const boardEl = $(".board");
   const contextEl = $("#active-context");
   const contextLabelEl = $("#active-context-label");
-  const sheetDialog = $("#sheet-dialog");
+  const boardView = $("#board-view");
+  const trackerView = $("#tracker-view");
+  const trackerFrameShell = $("#tracker-frame-shell");
+  const trackerLoading = $("#tracker-loading");
   const sheetFrame = $("#sheet-frame");
   const toast = $("#toast");
 
@@ -56,10 +63,22 @@
       .replace(/(^-|-$)/g, "");
   }
 
-  function sheetRowUrl(item) {
+  function sheetViewUrl(tab = "checklist", row = null) {
+    const gid = sheetTabs[tab] ?? sheetTabs.checklist;
+    const range = row ? `&range=A${row}:K${row}` : "";
     return (
       `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit` +
-      `#gid=${data.sheet.checklistGid}&range=A${item.sheetRow}:K${item.sheetRow}`
+      `#gid=${gid}${range}`
+    );
+  }
+
+  function sheetEmbedUrl(tab = "checklist", row = null) {
+    const gid = sheetTabs[tab] ?? sheetTabs.checklist;
+    const range = row ? `&range=A${row}:K${row}` : "";
+    return (
+      `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit` +
+      `?rm=minimal&single=true&gid=${gid}&widget=true&headers=false&embedded=true` +
+      `#gid=${gid}${range}`
     );
   }
 
@@ -170,12 +189,12 @@
         </div>
         <a
           class="edit-row"
-          href="${escapeHtml(sheetRowUrl(item))}"
-          target="_blank"
-          rel="noreferrer"
+          href="#tracker"
+          data-sheet-row="${item.sheetRow}"
+          data-gate-id="${escapeHtml(item.id)}"
           title="Edit this gate in the collaborative tracker"
         >
-          <span>Update live</span><span aria-hidden="true">↗</span>
+          <span>Update live</span><span aria-hidden="true">→</span>
         </a>
       </article>
     `;
@@ -215,6 +234,13 @@
     } else {
       contextEl.hidden = true;
     }
+
+    $$(".edit-row").forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        openTracker(Number(link.dataset.sheetRow));
+      });
+    });
   }
 
   function renderControls() {
@@ -247,34 +273,97 @@
     render();
   }
 
-  function openSheetDialog() {
-    if (!sheetFrame.src) sheetFrame.src = sheetEmbedUrl;
-    if (typeof sheetDialog.showModal === "function") {
-      sheetDialog.showModal();
-    } else {
-      window.open(sheetUrl, "_blank", "noopener,noreferrer");
+  function renderTrackerTabs() {
+    $$("[data-sheet-tab]").forEach((button) => {
+      const active = button.dataset.sheetTab === state.trackerTab;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+    });
+  }
+
+  function loadTracker(tab = state.trackerTab, row = null) {
+    state.trackerTab = sheetTabs[tab] ? tab : "checklist";
+    const nextUrl = sheetEmbedUrl(state.trackerTab, row);
+    $("#open-sheet-external").href = sheetViewUrl(state.trackerTab, row);
+    renderTrackerTabs();
+
+    if (sheetFrame.dataset.currentUrl !== nextUrl) {
+      trackerFrameShell.classList.remove("loaded");
+      trackerLoading.hidden = false;
+      sheetFrame.dataset.currentUrl = nextUrl;
+      sheetFrame.src = nextUrl;
     }
+  }
+
+  function updateSurfaceControls() {
+    $$("[data-surface]").forEach((button) => {
+      const active = button.dataset.surface === state.surface;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+    });
+  }
+
+  function setSurface(
+    surface,
+    { row = null, updateUrl = true, scroll = true } = {},
+  ) {
+    state.surface = surface === "tracker" ? "tracker" : "board";
+    boardView.hidden = state.surface !== "board";
+    trackerView.hidden = state.surface !== "tracker";
+    document.body.classList.toggle(
+      "tracker-active",
+      state.surface === "tracker",
+    );
+    updateSurfaceControls();
+
+    if (state.surface === "tracker") {
+      loadTracker(row ? "checklist" : state.trackerTab, row);
+    }
+
+    if (updateUrl) {
+      const next =
+        state.surface === "tracker"
+          ? `${window.location.pathname}${window.location.search}#tracker`
+          : `${window.location.pathname}${window.location.search}`;
+      if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== next) {
+        window.history.pushState({ surface: state.surface }, "", next);
+      }
+    }
+    if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function openTracker(row = null) {
+    setSurface("tracker", { row });
   }
 
   renderMetrics();
   render();
 
-  $("#open-sheet-top").href = sheetUrl;
-  $("#open-sheet-dialog").href = sheetUrl;
+  $("#open-sheet-external").href = sheetUrl;
+  setSurface(state.surface, { updateUrl: false, scroll: false });
 
-  $("#open-collab").addEventListener("click", () => {
-    window.open(sheetUrl, "_blank", "noopener,noreferrer");
+  $("#open-collab").addEventListener("click", () => openTracker());
+  $("#preview-sheet").addEventListener("click", () => openTracker());
+  $("#show-tracker-top").addEventListener("click", () => openTracker());
+  $("#show-board-top").addEventListener("click", () => setSurface("board"));
+  $("#back-to-board").addEventListener("click", () => setSurface("board"));
+
+  $$("#tracker-view [data-sheet-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      loadTracker(button.dataset.sheetTab);
+    });
   });
-  $("#preview-sheet").addEventListener("click", openSheetDialog);
-  $("#close-dialog").addEventListener("click", () => sheetDialog.close());
-  sheetDialog.addEventListener("click", (event) => {
-    const rect = sheetDialog.getBoundingClientRect();
-    const inside =
-      event.clientX >= rect.left &&
-      event.clientX <= rect.right &&
-      event.clientY >= rect.top &&
-      event.clientY <= rect.bottom;
-    if (!inside) sheetDialog.close();
+
+  sheetFrame.addEventListener("load", () => {
+    trackerFrameShell.classList.add("loaded");
+    window.setTimeout(() => {
+      trackerLoading.hidden = true;
+    }, 220);
+  });
+
+  window.addEventListener("popstate", () => {
+    const surface = window.location.hash === "#tracker" ? "tracker" : "board";
+    setSurface(surface, { updateUrl: false, scroll: false });
   });
 
   $("#jump-checklist").addEventListener("click", () => {
@@ -320,11 +409,11 @@
   document.addEventListener("keydown", (event) => {
     if (
       event.key === "/" &&
+      state.surface === "board" &&
       !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)
     ) {
       event.preventDefault();
       $("#search-input").focus();
     }
-    if (event.key === "Escape" && sheetDialog.open) sheetDialog.close();
   });
 })();
