@@ -8,22 +8,37 @@
     return;
   }
 
+  const BRIDGE_URL =
+    "https://script.google.com/a/macros/staratlas.com/s/AKfycbxESbHQyXuAEHgxNRhTeGRw6MWKy10XFHRG2jYwH6Dafa8k5M-4AIG305-A0o4v0VXq/exec";
+  const BRIDGE_CHANNEL = "c4-readiness-tracker";
+  const STATUS_VALUES = [
+    "Not started",
+    "In progress",
+    "Blocked",
+    "Needs decision",
+    "Verify",
+    "Waived",
+    "Done",
+  ];
   const sheetUrl = `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit?usp=sharing`;
-  const sheetTabs = {
-    checklist: data.sheet.checklistGid,
-    dashboard: data.sheet.dashboardGid,
-    guide: data.sheet.guideGid,
-  };
 
   const state = {
     query: "",
     priority: "ALL",
+    status: "ALL",
     section: null,
     density: localStorage.getItem("c4-density") || "comfortable",
-    surface: window.location.hash === "#tracker" ? "tracker" : "board",
-    trackerTab: "checklist",
+    tracker: new Map(),
+    token: "",
+    editor: "",
+    connection: "loading",
+    activeGate: null,
+    saving: false,
+    lastSync: 0,
+    returnFocus: null,
   };
 
+  const pendingBridgeRequests = new Map();
   const $ = (selector) => document.querySelector(selector);
   const $$ = (selector) => [...document.querySelectorAll(selector)];
   const groupsEl = $("#checklist-groups");
@@ -31,15 +46,15 @@
   const boardEl = $(".board");
   const contextEl = $("#active-context");
   const contextLabelEl = $("#active-context-label");
-  const boardView = $("#board-view");
-  const trackerView = $("#tracker-view");
-  const trackerFrameShell = $("#tracker-frame-shell");
-  const trackerLoading = $("#tracker-loading");
-  const sheetFrame = $("#sheet-frame");
+  const drawerEl = $("#gate-drawer");
+  const backdropEl = $("#drawer-backdrop");
+  const gateForm = $("#gate-form");
+  const gateFields = $("#gate-fields");
+  const saveButton = $("#save-gate");
   const toast = $("#toast");
 
   function escapeHtml(value) {
-    return String(value)
+    return String(value ?? "")
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;")
@@ -57,39 +72,79 @@
   }
 
   function slug(value) {
-    return value
+    return String(value)
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "");
   }
 
-  function sheetViewUrl(tab = "checklist", row = null) {
-    const gid = sheetTabs[tab] ?? sheetTabs.checklist;
+  function statusClass(value) {
+    return `status-${slug(value || "not-started")}`;
+  }
+
+  function sheetViewUrl(row = null) {
     const range = row ? `&range=A${row}:K${row}` : "";
     return (
       `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit` +
-      `#gid=${gid}${range}`
+      `#gid=${data.sheet.checklistGid}${range}`
     );
   }
 
-  function sheetEmbedUrl(tab = "checklist", row = null) {
-    const gid = sheetTabs[tab] ?? sheetTabs.checklist;
-    const range = row ? `&range=A${row}:K${row}` : "";
-    return (
-      `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit` +
-      `?rm=minimal&single=true&gid=${gid}&widget=true&headers=false&embedded=true` +
-      `#gid=${gid}${range}`
-    );
-  }
-
-  function showToast(message) {
+  function showToast(message, kind = "success") {
     toast.textContent = message;
+    toast.dataset.kind = kind;
     toast.classList.add("visible");
     window.clearTimeout(showToast.timer);
     showToast.timer = window.setTimeout(
       () => toast.classList.remove("visible"),
-      2200,
+      2600,
     );
+  }
+
+  function liveFor(item) {
+    return (
+      state.tracker.get(item.id) || {
+        row: item.sheetRow,
+        id: item.id,
+        area: item.section,
+        priority: item.priority,
+        title: item.title,
+        detail: item.detail,
+        status: "Not started",
+        owner: "",
+        targetDate: "",
+        evidence: "",
+        notes: "",
+        lastUpdated: "",
+      }
+    );
+  }
+
+  function itemForId(id) {
+    return data.items.find((item) => item.id === id) || null;
+  }
+
+  function formatDate(value) {
+    if (!value) return "No target";
+    const parsed = new Date(`${value}T12:00:00`);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    }).format(parsed);
+  }
+
+  function formatLastUpdated(value) {
+    if (!value) return "Not yet updated";
+    const parsed = new Date(value.replace(" ", "T"));
+    if (Number.isNaN(parsed.getTime())) return `Updated ${value}`;
+    return `Updated ${new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(parsed)}`;
   }
 
   const sections = [...new Set(data.items.map((item) => item.section))];
@@ -101,14 +156,20 @@
   );
 
   function renderMetrics() {
+    const liveItems = data.items.map((item) => ({
+      item,
+      live: liveFor(item),
+    }));
     $("#metric-total").textContent = data.items.length;
-    $("#metric-p0").textContent = data.items.filter(
-      (item) => item.priority === "P0",
+    $("#metric-p0").textContent = liveItems.filter(
+      ({ item, live }) => item.priority === "P0" && live.status !== "Done",
     ).length;
-    $("#metric-decisions").textContent = data.items.filter(
-      (item) => item.priority === "DECISION",
+    $("#metric-progress").textContent = liveItems.filter(
+      ({ live }) => live.status === "In progress",
     ).length;
-    $("#metric-sections").textContent = sections.length;
+    $("#metric-done").textContent = liveItems.filter(
+      ({ live }) => live.status === "Done",
+    ).length;
   }
 
   function renderSectionNav() {
@@ -142,9 +203,11 @@
   function filteredItems() {
     const query = state.query.trim().toLowerCase();
     return data.items.filter((item) => {
+      const live = liveFor(item);
       if (state.priority !== "ALL" && item.priority !== state.priority) {
         return false;
       }
+      if (state.status !== "ALL" && live.status !== state.status) return false;
       if (state.section && item.section !== state.section) return false;
       if (!query) return true;
       const haystack = [
@@ -153,6 +216,11 @@
         item.priority,
         item.title,
         item.detail,
+        live.status,
+        live.owner,
+        live.targetDate,
+        live.evidence,
+        live.notes,
         ...item.links.map((link) => `${link.label} ${link.url}`),
       ]
         .join(" ")
@@ -162,6 +230,7 @@
   }
 
   function gateMarkup(item) {
+    const live = liveFor(item);
     const links = item.links
       .map(
         (link) => `
@@ -174,28 +243,40 @@
         `,
       )
       .join("");
+    const owner = live.owner || "Unassigned";
 
     return `
-      <article class="gate" id="${escapeHtml(item.id)}">
+      <article
+        class="gate"
+        id="${escapeHtml(item.id)}"
+        data-gate-id="${escapeHtml(item.id)}"
+        role="button"
+        tabindex="0"
+        aria-label="Open ${escapeHtml(item.title)}"
+      >
         <span class="gate-index">${String(item.ordinal).padStart(3, "0")}</span>
         <div class="gate-body">
           <div class="gate-meta">
             <span class="priority priority-${item.priority.toLowerCase()}">${escapeHtml(item.priority)}</span>
             <span class="gate-id">${escapeHtml(item.id)}</span>
+            <span class="status-pill ${statusClass(live.status)}">${escapeHtml(live.status)}</span>
           </div>
           <h4 class="gate-title">${escapeHtml(item.title)}</h4>
           ${item.detail ? `<p class="gate-detail">${escapeHtml(item.detail)}</p>` : ""}
+          <div class="gate-live-meta">
+            <span class="${live.owner ? "has-value" : ""}">${escapeHtml(owner)}</span>
+            <span class="${live.targetDate ? "has-value" : ""}">${escapeHtml(formatDate(live.targetDate))}</span>
+          </div>
           ${links ? `<div class="gate-links">${links}</div>` : ""}
         </div>
-        <a
+        <button
           class="edit-row"
-          href="#tracker"
-          data-sheet-row="${item.sheetRow}"
-          data-gate-id="${escapeHtml(item.id)}"
-          title="Edit this gate in the collaborative tracker"
+          type="button"
+          data-open-gate="${escapeHtml(item.id)}"
+          title="Open this readiness gate"
         >
-          <span>Update live</span><span aria-hidden="true">→</span>
-        </a>
+          <span>Open gate</span><span aria-hidden="true">→</span>
+        </button>
       </article>
     `;
   }
@@ -234,13 +315,6 @@
     } else {
       contextEl.hidden = true;
     }
-
-    $$(".edit-row").forEach((link) => {
-      link.addEventListener("click", (event) => {
-        event.preventDefault();
-        openTracker(Number(link.dataset.sheetRow));
-      });
-    });
   }
 
   function renderControls() {
@@ -256,10 +330,12 @@
         button.dataset.density === state.density,
       );
     });
+    $("#status-filter").value = state.status;
     boardEl.classList.toggle("compact", state.density === "compact");
   }
 
   function render() {
+    renderMetrics();
     renderSectionNav();
     renderChecklist();
     renderControls();
@@ -268,104 +344,307 @@
   function resetFilters() {
     state.query = "";
     state.priority = "ALL";
+    state.status = "ALL";
     state.section = null;
     $("#search-input").value = "";
     render();
   }
 
-  function renderTrackerTabs() {
-    $$("[data-sheet-tab]").forEach((button) => {
-      const active = button.dataset.sheetTab === state.trackerTab;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-selected", String(active));
-    });
-  }
-
-  function loadTracker(tab = state.trackerTab, row = null) {
-    state.trackerTab = sheetTabs[tab] ? tab : "checklist";
-    const nextUrl = sheetEmbedUrl(state.trackerTab, row);
-    $("#open-sheet-external").href = sheetViewUrl(state.trackerTab, row);
-    renderTrackerTabs();
-
-    if (sheetFrame.dataset.currentUrl !== nextUrl) {
-      trackerFrameShell.classList.remove("loaded");
-      trackerLoading.hidden = false;
-      sheetFrame.dataset.currentUrl = nextUrl;
-      sheetFrame.src = nextUrl;
+  function renderSyncState() {
+    const label = $("#sync-state");
+    label.classList.remove("is-loading", "is-ready", "is-error");
+    const text = label.querySelector("span");
+    if (state.saving) {
+      label.classList.add("is-loading");
+      text.textContent = "Saving to tracker…";
+      return;
     }
+    if (state.connection === "ready") {
+      label.classList.add("is-ready");
+      text.textContent = state.editor
+        ? `Live · ${state.editor}`
+        : "Live tracker";
+      return;
+    }
+    if (state.connection === "error") {
+      label.classList.add("is-error");
+      text.textContent = "View-only · connect to edit";
+      return;
+    }
+    label.classList.add("is-loading");
+    text.textContent = "Connecting tracker…";
   }
 
-  function updateSurfaceControls() {
-    $$("[data-surface]").forEach((button) => {
-      const active = button.dataset.surface === state.surface;
-      button.classList.toggle("active", active);
-      button.setAttribute("aria-selected", String(active));
-    });
+  function renderEditorState(message = "") {
+    const editorState = $("#editor-state");
+    editorState.classList.remove("is-ready", "is-error", "is-saving");
+    if (state.saving) {
+      editorState.classList.add("is-saving");
+      editorState.querySelector("span").textContent =
+        "Saving your changes to the live tracker…";
+    } else if (state.connection === "ready" && state.token) {
+      editorState.classList.add("is-ready");
+      editorState.querySelector("span").textContent = state.editor
+        ? `Editing live as ${state.editor}`
+        : "Connected to the live Star Atlas tracker";
+    } else if (state.connection === "error") {
+      editorState.classList.add("is-error");
+      editorState.querySelector("span").innerHTML =
+        `${escapeHtml(message || "Editing is unavailable in this browser session.")} ` +
+        `<a href="${escapeHtml(BRIDGE_URL)}" target="_blank" rel="noreferrer">Enable editing ↗</a>`;
+    } else {
+      editorState.querySelector("span").textContent =
+        "Connecting to the live tracker…";
+    }
+
+    const canEdit =
+      state.connection === "ready" && Boolean(state.token) && !state.saving;
+    gateFields.disabled = !canEdit;
+    saveButton.disabled = !canEdit;
+    saveButton.textContent = state.saving ? "Saving…" : "Save to tracker";
   }
 
-  function setSurface(
-    surface,
-    { row = null, updateUrl = true, scroll = true } = {},
-  ) {
-    state.surface = surface === "tracker" ? "tracker" : "board";
-    boardView.hidden = state.surface !== "board";
-    trackerView.hidden = state.surface !== "tracker";
-    document.body.classList.toggle(
-      "tracker-active",
-      state.surface === "tracker",
+  function renderDrawer() {
+    const item = itemForId(state.activeGate);
+    if (!item) return;
+    const live = liveFor(item);
+    $("#drawer-id").textContent = item.id;
+    $("#drawer-title").textContent = item.title;
+    const priority = $("#drawer-priority");
+    priority.textContent = item.priority;
+    priority.className = `priority priority-${item.priority.toLowerCase()}`;
+    $("#drawer-area").textContent = item.section;
+    const status = $("#drawer-current-status");
+    status.textContent = live.status;
+    status.className = `status-pill ${statusClass(live.status)}`;
+    $("#drawer-detail").textContent = item.detail || "No additional detail.";
+    $("#drawer-links").innerHTML = item.links
+      .map(
+        (link) => `
+          <a class="source-link" href="${escapeHtml(safeUrl(link.url))}"
+             target="_blank" rel="noreferrer">${escapeHtml(link.label)} ↗</a>
+        `,
+      )
+      .join("");
+    $("#drawer-links").hidden = item.links.length === 0;
+
+    $("#gate-status").value = STATUS_VALUES.includes(live.status)
+      ? live.status
+      : "Not started";
+    $("#gate-owner").value = live.owner || "";
+    $("#gate-target-date").value = live.targetDate || "";
+    $("#gate-evidence").value = live.evidence || "";
+    $("#gate-notes").value = live.notes || "";
+    $("#drawer-last-updated").textContent = formatLastUpdated(
+      live.lastUpdated,
     );
-    updateSurfaceControls();
+    $("#drawer-sheet-link").href = sheetViewUrl(item.sheetRow);
+    renderEditorState();
+  }
 
-    if (state.surface === "tracker") {
-      loadTracker(row ? "checklist" : state.trackerTab, row);
+  function openDrawer(id, trigger = document.activeElement) {
+    const item = itemForId(id);
+    if (!item) return;
+    state.activeGate = id;
+    state.returnFocus = trigger;
+    renderDrawer();
+    document.body.classList.add("drawer-open");
+    backdropEl.hidden = false;
+    drawerEl.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => {
+      backdropEl.classList.add("visible");
+      drawerEl.classList.add("open");
+      $("#drawer-close").focus();
+    });
+  }
+
+  function closeDrawer() {
+    drawerEl.classList.remove("open");
+    backdropEl.classList.remove("visible");
+    drawerEl.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("drawer-open");
+    window.setTimeout(() => {
+      backdropEl.hidden = true;
+    }, 220);
+    if (state.returnFocus instanceof HTMLElement) state.returnFocus.focus();
+    state.returnFocus = null;
+  }
+
+  function requestId(prefix) {
+    const value =
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    return `${prefix}-${value}`;
+  }
+
+  function bridgeOriginAllowed(origin) {
+    try {
+      const url = new URL(origin);
+      return (
+        url.protocol === "https:" &&
+        (url.hostname === "script.googleusercontent.com" ||
+          url.hostname.endsWith(".script.googleusercontent.com") ||
+          url.hostname.endsWith("-script.googleusercontent.com"))
+      );
+    } catch {
+      return false;
     }
+  }
 
-    if (updateUrl) {
-      const next =
-        state.surface === "tracker"
-          ? `${window.location.pathname}${window.location.search}#tracker`
-          : `${window.location.pathname}${window.location.search}`;
-      if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== next) {
-        window.history.pushState({ surface: state.surface }, "", next);
+  function trackBridgeRequest(id, type, timeoutMs = 20000) {
+    const timer = window.setTimeout(() => {
+      pendingBridgeRequests.delete(id);
+      if (type === "load") {
+        state.connection = "error";
+        state.token = "";
+        renderSyncState();
+        if (state.activeGate) {
+          renderEditorState(
+            "The tracker did not connect. Sign in with your Star Atlas Google account, then refresh.",
+          );
+        }
+      } else {
+        state.saving = false;
+        renderSyncState();
+        renderEditorState(
+          "The save timed out. Refresh before trying again.",
+        );
+        showToast("Save timed out — no change confirmed", "error");
+      }
+    }, timeoutMs);
+    pendingBridgeRequests.set(id, { type, timer });
+  }
+
+  function loadTracker() {
+    for (const [id, pending] of pendingBridgeRequests) {
+      if (pending.type === "load") {
+        clearTimeout(pending.timer);
+        pendingBridgeRequests.delete(id);
       }
     }
-    if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
+    state.connection = "loading";
+    state.token = "";
+    renderSyncState();
+    if (state.activeGate) renderEditorState();
+
+    const id = requestId("load");
+    trackBridgeRequest(id, "load");
+    const url = new URL(BRIDGE_URL);
+    url.searchParams.set("requestId", id);
+    url.searchParams.set("_", String(Date.now()));
+    $("#tracker-bridge").src = url.href;
   }
 
-  function openTracker(row = null) {
-    setSurface("tracker", { row });
+  function saveTracker(payload) {
+    if (!state.token || state.connection !== "ready" || state.saving) return;
+    state.saving = true;
+    renderSyncState();
+    renderEditorState();
+
+    const id = requestId("save");
+    trackBridgeRequest(id, "save");
+    const form = $("#tracker-bridge-form");
+    form.action = BRIDGE_URL;
+    form.elements.namedItem("requestId").value = id;
+    form.elements.namedItem("token").value = state.token;
+    form.elements.namedItem("payload").value = JSON.stringify(payload);
+    form.submit();
   }
 
-  renderMetrics();
-  render();
+  window.addEventListener("message", (event) => {
+    if (!bridgeOriginAllowed(event.origin)) return;
+    const message = event.data;
+    if (!message || message.channel !== BRIDGE_CHANNEL) return;
+    const pending = pendingBridgeRequests.get(message.requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingBridgeRequests.delete(message.requestId);
 
-  $("#open-sheet-external").href = sheetUrl;
-  setSurface(state.surface, { updateUrl: false, scroll: false });
+    if (!message.ok) {
+      if (pending.type === "load") {
+        state.connection = "error";
+        state.token = "";
+        renderSyncState();
+        if (state.activeGate) renderEditorState(message.error);
+        return;
+      }
+      state.saving = false;
+      renderSyncState();
+      renderEditorState(message.error);
+      showToast(message.error || "The tracker rejected this save", "error");
+      return;
+    }
 
-  $("#open-collab").addEventListener("click", () => openTracker());
-  $("#preview-sheet").addEventListener("click", () => openTracker());
-  $("#show-tracker-top").addEventListener("click", () => openTracker());
-  $("#show-board-top").addEventListener("click", () => setSurface("board"));
-  $("#back-to-board").addEventListener("click", () => setSurface("board"));
+    if (pending.type === "load") {
+      const result = message.result || {};
+      state.tracker = new Map(
+        (result.items || []).map((item) => [item.id, item]),
+      );
+      state.token = result.token || "";
+      state.editor = result.editor || "";
+      state.connection = "ready";
+      state.lastSync = Date.now();
+      renderSyncState();
+      render();
+      if (state.activeGate) renderDrawer();
+      return;
+    }
 
-  $$("#tracker-view [data-sheet-tab]").forEach((button) => {
-    button.addEventListener("click", () => {
-      loadTracker(button.dataset.sheetTab);
+    state.saving = false;
+    if (message.result?.id) {
+      state.tracker.set(message.result.id, message.result);
+    }
+    state.lastSync = Date.now();
+    renderSyncState();
+    render();
+    renderDrawer();
+    showToast("Gate saved to the live tracker");
+  });
+
+  groupsEl.addEventListener("click", (event) => {
+    if (event.target.closest(".source-link")) return;
+    const trigger = event.target.closest("[data-gate-id], [data-open-gate]");
+    if (!trigger) return;
+    const id = trigger.dataset.openGate || trigger.dataset.gateId;
+    openDrawer(id, trigger);
+  });
+
+  groupsEl.addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key)) return;
+    const gate = event.target.closest(".gate[data-gate-id]");
+    if (!gate || event.target.closest("a, button")) return;
+    event.preventDefault();
+    openDrawer(gate.dataset.gateId, gate);
+  });
+
+  gateForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const item = itemForId(state.activeGate);
+    if (!item) return;
+    const live = liveFor(item);
+    saveTracker({
+      id: item.id,
+      status: $("#gate-status").value,
+      owner: $("#gate-owner").value,
+      targetDate: $("#gate-target-date").value,
+      evidence: $("#gate-evidence").value,
+      notes: $("#gate-notes").value,
+      expectedLastUpdated: live.lastUpdated || "",
     });
   });
 
-  sheetFrame.addEventListener("load", () => {
-    trackerFrameShell.classList.add("loaded");
-    window.setTimeout(() => {
-      trackerLoading.hidden = true;
-    }, 220);
-  });
+  $("#open-sheet-top").href = sheetUrl;
+  $("#drawer-close").addEventListener("click", closeDrawer);
+  backdropEl.addEventListener("click", closeDrawer);
+  $("#refresh-tracker").addEventListener("click", loadTracker);
+  $("#refresh-gate").addEventListener("click", loadTracker);
 
-  window.addEventListener("popstate", () => {
-    const surface = window.location.hash === "#tracker" ? "tracker" : "board";
-    setSurface(surface, { updateUrl: false, scroll: false });
+  $("#open-collab").addEventListener("click", () => {
+    $("#checklist").scrollIntoView({ behavior: "smooth" });
   });
-
+  $("#preview-sheet").addEventListener("click", () => {
+    $("#checklist").scrollIntoView({ behavior: "smooth" });
+  });
   $("#jump-checklist").addEventListener("click", () => {
     $("#checklist").scrollIntoView({ behavior: "smooth" });
   });
@@ -374,14 +653,16 @@
     state.query = event.target.value;
     renderChecklist();
   });
-
+  $("#status-filter").addEventListener("change", (event) => {
+    state.status = event.target.value;
+    render();
+  });
   $$("#priority-filter button").forEach((button) => {
     button.addEventListener("click", () => {
       state.priority = button.dataset.priority;
       render();
     });
   });
-
   $$(".view-toggle button").forEach((button) => {
     button.addEventListener("click", () => {
       state.density = button.dataset.density;
@@ -396,24 +677,33 @@
     render();
   });
   $("#empty-reset").addEventListener("click", resetFilters);
-
   $("#copy-page-link").addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(window.location.href);
       showToast("Page link copied");
     } catch {
-      showToast("Copy failed — use the address bar");
+      showToast("Copy failed — use the address bar", "error");
     }
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && drawerEl.classList.contains("open")) {
+      closeDrawer();
+      return;
+    }
     if (
       event.key === "/" &&
-      state.surface === "board" &&
-      !["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName)
+      !drawerEl.classList.contains("open") &&
+      !["INPUT", "TEXTAREA", "SELECT"].includes(
+        document.activeElement?.tagName,
+      )
     ) {
       event.preventDefault();
       $("#search-input").focus();
     }
   });
+
+  render();
+  renderSyncState();
+  loadTracker();
 })();

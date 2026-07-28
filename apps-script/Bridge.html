@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+  <head>
+    <base target="_top" />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        color: #eaf7f7;
+        background: #041014;
+      }
+      main {
+        max-width: 440px;
+        padding: 32px;
+        border: 1px solid rgba(68, 240, 232, 0.25);
+        border-radius: 16px;
+        background: #081b22;
+        text-align: center;
+      }
+      i {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        margin-right: 8px;
+        border-radius: 50%;
+        background: #7be1a1;
+        box-shadow: 0 0 12px rgba(123, 225, 161, 0.7);
+      }
+      h1 {
+        margin: 0 0 10px;
+        font-size: 1.25rem;
+      }
+      p {
+        margin: 0;
+        color: #87a4aa;
+        font-size: 0.86rem;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1><i></i>Tracker session ready</h1>
+      <p>
+        Return to the C4 readiness dashboard and choose Refresh. You can close
+        this tab.
+      </p>
+    </main>
+    <script>
+      (() => {
+        "use strict";
+
+        const allowedOrigins = new Set([
+          "https://sage-nt.github.io",
+          "https://star-atlas-c4-readiness.sage471239.chatgpt.site",
+          "http://127.0.0.1:4173",
+          "http://localhost:4173",
+        ]);
+
+        const message = <?!= messageJson ?>;
+        for (const origin of allowedOrigins) {
+          window.top.postMessage(message, origin);
+        }
+      })();
+    </script>
+  </body>
+</html>

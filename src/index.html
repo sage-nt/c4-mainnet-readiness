@@ -30,37 +30,24 @@
         </span>
       </a>
       <div class="topbar-actions">
-        <span class="sync-label">
+        <span class="sync-label is-loading" id="sync-state">
           <i aria-hidden="true"></i>
-          Baseline reconciled Jul 28
+          <span>Connecting tracker…</span>
         </span>
-        <div class="surface-tabs" role="tablist" aria-label="Readiness views">
-          <button
-            class="active"
-            id="show-board-top"
-            role="tab"
-            aria-selected="true"
-            aria-controls="board-view"
-            data-surface="board"
-          >
-            Board
-          </button>
-          <button
-            id="show-tracker-top"
-            role="tab"
-            aria-selected="false"
-            aria-controls="tracker-view"
-            data-surface="tracker"
-          >
-            <i aria-hidden="true"></i>
-            Live tracker
-          </button>
-        </div>
+        <button class="topbar-button" id="refresh-tracker">Refresh</button>
+        <a
+          class="topbar-button topbar-button-accent"
+          id="open-sheet-top"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Full sheet ↗
+        </a>
       </div>
     </header>
 
     <main>
-      <div id="board-view" class="surface-view">
+      <div id="board-view">
         <section class="hero">
           <div class="hero-copy">
             <p class="eyebrow"><span>MAINNET</span> READINESS BOARD</p>
@@ -71,8 +58,8 @@
             </p>
             <div class="hero-actions">
               <button class="button button-primary button-large" id="open-collab">
-                Collaborate on the live tracker
-                <span aria-hidden="true">→</span>
+                Open the release tracker
+                <span aria-hidden="true">↓</span>
               </button>
               <button class="button button-quiet button-large" id="jump-checklist">
                 Browse the baseline
@@ -104,19 +91,19 @@
             <small>full release inventory</small>
           </article>
           <article class="metric metric-red">
-            <span class="metric-label">P0 GATES</span>
+            <span class="metric-label">P0 REMAINING</span>
             <strong id="metric-p0">—</strong>
-            <small>must close or disable</small>
+            <small>not marked done</small>
           </article>
           <article class="metric metric-amber">
-            <span class="metric-label">DECISIONS</span>
-            <strong id="metric-decisions">—</strong>
-            <small>scope and product calls</small>
+            <span class="metric-label">IN PROGRESS</span>
+            <strong id="metric-progress">—</strong>
+            <small>actively owned work</small>
           </article>
           <article class="metric metric-violet">
-            <span class="metric-label">SYSTEM AREAS</span>
-            <strong id="metric-sections">—</strong>
-            <small>end-to-end coverage</small>
+            <span class="metric-label">DONE</span>
+            <strong id="metric-done">—</strong>
+            <small>closed with evidence</small>
           </article>
         </section>
 
@@ -125,14 +112,14 @@
             <span></span><span></span><span></span>
           </div>
           <div class="collab-copy">
-            <b>The Google Sheet is embedded as the live collaborative record.</b>
+            <b>The dashboard is now the collaborative tracker.</b>
             <span>
-              Update status, owner, target date, evidence, and notes without
-              leaving this page.
+              Click any gate to review its detail, assign an owner, set a date,
+              attach evidence, add notes, and save.
             </span>
           </div>
           <button class="text-link" id="preview-sheet">
-            Work in the tracker <span aria-hidden="true">→</span>
+            Browse live gates <span aria-hidden="true">↓</span>
           </button>
         </section>
 
@@ -182,6 +169,19 @@
                 <button data-priority="VERIFY">Verify</button>
                 <button data-priority="OPS">Ops</button>
               </div>
+              <label class="status-filter">
+                <span>Status</span>
+                <select id="status-filter">
+                  <option value="ALL">All statuses</option>
+                  <option value="Not started">Not started</option>
+                  <option value="In progress">In progress</option>
+                  <option value="Blocked">Blocked</option>
+                  <option value="Needs decision">Needs decision</option>
+                  <option value="Verify">Verify</option>
+                  <option value="Waived">Waived</option>
+                  <option value="Done">Done</option>
+                </select>
+              </label>
             </div>
 
             <div class="active-context" id="active-context" hidden>
@@ -201,89 +201,6 @@
           </div>
         </section>
       </div>
-
-      <section
-        class="tracker-view surface-view"
-        id="tracker-view"
-        aria-labelledby="tracker-title"
-        hidden
-      >
-        <div class="tracker-head">
-          <div>
-            <p class="eyebrow"><span>LIVE</span> TEAM WORKSPACE</p>
-            <h1 id="tracker-title">Collaborative tracker</h1>
-            <p>
-              Edit status, owner, dates, evidence, and notes here. Changes save
-              directly to the shared Star Atlas Sheet.
-            </p>
-          </div>
-          <div class="tracker-head-actions">
-            <button class="button button-quiet" id="back-to-board">
-              <span aria-hidden="true">←</span>
-              Back to board
-            </button>
-            <a
-              class="button button-primary"
-              id="open-sheet-external"
-              target="_blank"
-              rel="noreferrer"
-            >
-              Open full screen
-              <span aria-hidden="true">↗</span>
-            </a>
-          </div>
-        </div>
-
-        <div class="tracker-toolbar">
-          <div class="tracker-sheet-tabs" role="tablist" aria-label="Tracker sheets">
-            <button
-              class="active"
-              role="tab"
-              aria-selected="true"
-              data-sheet-tab="checklist"
-            >
-              Checklist
-            </button>
-            <button
-              role="tab"
-              aria-selected="false"
-              data-sheet-tab="dashboard"
-            >
-              Dashboard
-            </button>
-            <button role="tab" aria-selected="false" data-sheet-tab="guide">
-              Guide
-            </button>
-          </div>
-          <p>
-            <i aria-hidden="true"></i>
-            Sign in with your <b>@staratlas.com</b> Google account to edit.
-          </p>
-        </div>
-
-        <div class="tracker-frame-shell" id="tracker-frame-shell">
-          <div class="tracker-loading" id="tracker-loading">
-            <span aria-hidden="true"></span>
-            <div>
-              <b>Loading the live tracker…</b>
-              <small>
-                If Google asks you to sign in, use your Star Atlas account.
-              </small>
-            </div>
-          </div>
-          <iframe
-            id="sheet-frame"
-            title="C4 mainnet readiness team tracker"
-            loading="lazy"
-            allow="clipboard-read; clipboard-write"
-          ></iframe>
-        </div>
-
-        <p class="tracker-note">
-          Google may block its sign-in screen inside an iframe. If the tracker
-          stays blank, use “Open full screen” once, sign in, then return here.
-        </p>
-      </section>
     </main>
 
     <footer>
@@ -291,6 +208,133 @@
       <span>Baseline is a launch-control starting point, not a readiness claim.</span>
       <button id="copy-page-link">Copy page link</button>
     </footer>
+
+    <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+    <aside
+      class="gate-drawer"
+      id="gate-drawer"
+      aria-hidden="true"
+      aria-labelledby="drawer-title"
+    >
+      <header class="drawer-head">
+        <div>
+          <p class="eyebrow"><span>LIVE GATE</span> <b id="drawer-id"></b></p>
+          <h2 id="drawer-title">Readiness gate</h2>
+        </div>
+        <button class="drawer-close" id="drawer-close" aria-label="Close gate">
+          ×
+        </button>
+      </header>
+
+      <div class="drawer-scroll">
+        <div class="drawer-classification">
+          <span class="priority" id="drawer-priority"></span>
+          <span id="drawer-area"></span>
+          <span class="status-pill" id="drawer-current-status"></span>
+        </div>
+        <p class="drawer-detail" id="drawer-detail"></p>
+        <div class="gate-links drawer-links" id="drawer-links"></div>
+
+        <div class="editor-state" id="editor-state">
+          <i aria-hidden="true"></i>
+          <span>Connecting to the live tracker…</span>
+        </div>
+
+        <form id="gate-form">
+          <fieldset id="gate-fields" disabled>
+            <div class="form-grid">
+              <label class="field">
+                <span>Status</span>
+                <select id="gate-status" name="status">
+                  <option>Not started</option>
+                  <option>In progress</option>
+                  <option>Blocked</option>
+                  <option>Needs decision</option>
+                  <option>Verify</option>
+                  <option>Waived</option>
+                  <option>Done</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Target date</span>
+                <input id="gate-target-date" name="targetDate" type="date" />
+              </label>
+            </div>
+            <label class="field">
+              <span>Owner</span>
+              <input
+                id="gate-owner"
+                name="owner"
+                type="text"
+                maxlength="120"
+                placeholder="Accountable DRI"
+              />
+            </label>
+            <label class="field">
+              <span>Evidence / link</span>
+              <textarea
+                id="gate-evidence"
+                name="evidence"
+                rows="3"
+                maxlength="3000"
+                placeholder="PR, commit, deployment, test output, screenshot, transaction…"
+              ></textarea>
+            </label>
+            <label class="field">
+              <span>Notes</span>
+              <textarea
+                id="gate-notes"
+                name="notes"
+                rows="6"
+                maxlength="6000"
+                placeholder="Decision context, blockers, supporting owners, follow-up…"
+              ></textarea>
+            </label>
+          </fieldset>
+
+          <div class="drawer-meta">
+            <span id="drawer-last-updated">Not yet updated</span>
+            <button type="button" id="refresh-gate">Refresh live data</button>
+          </div>
+          <div class="drawer-actions">
+            <a
+              class="button button-quiet"
+              id="drawer-sheet-link"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open row ↗
+            </a>
+            <button
+              class="button button-primary"
+              id="save-gate"
+              type="submit"
+              disabled
+            >
+              Save to tracker
+            </button>
+          </div>
+        </form>
+      </div>
+    </aside>
+
+    <iframe
+      class="bridge-frame"
+      id="tracker-bridge"
+      name="tracker-bridge"
+      title="Tracker synchronization"
+      aria-hidden="true"
+    ></iframe>
+    <form
+      id="tracker-bridge-form"
+      method="post"
+      target="tracker-bridge"
+      hidden
+    >
+      <input name="requestId" />
+      <input name="token" />
+      <input name="payload" />
+    </form>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
