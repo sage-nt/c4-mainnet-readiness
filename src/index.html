@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Star Atlas C4 mainnet readiness launch-control board"
+    />
+    <meta name="theme-color" content="#061319" />
+    <title>C4 Mainnet Readiness · Star Atlas</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-a" aria-hidden="true"></div>
+    <div class="ambient ambient-b" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="C4 readiness home">
+        <span class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </span>
+        <span>
+          <b>STAR ATLAS</b>
+          <small>C4 RELEASE CONTROL</small>
+        </span>
+      </a>
+      <div class="topbar-actions">
+        <span class="sync-label">
+          <i aria-hidden="true"></i>
+          Baseline reconciled Jul 28
+        </span>
+        <a
+          class="button button-primary"
+          id="open-sheet-top"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open live tracker
+          <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow"><span>MAINNET</span> READINESS BOARD</p>
+          <h1>Make launch risk<br /><em>visible.</em></h1>
+          <p class="hero-lede">
+            One release-control surface for every C4 program, data, economy,
+            client, infrastructure, and operations gate.
+          </p>
+          <div class="hero-actions">
+            <button class="button button-primary button-large" id="open-collab">
+              Collaborate on the live tracker
+              <span aria-hidden="true">↗</span>
+            </button>
+            <button class="button button-quiet button-large" id="jump-checklist">
+              Browse the baseline
+              <span aria-hidden="true">↓</span>
+            </button>
+          </div>
+        </div>
+        <div class="mission-card">
+          <div class="mission-card-grid" aria-hidden="true"></div>
+          <div class="mission-topline">
+            <span>LAUNCH CONDITION</span>
+            <span class="live-chip"><i></i> CONTROLLED</span>
+          </div>
+          <p class="mission-rule">
+            No open P0 without a written scope disable that makes the behavior
+            unreachable.
+          </p>
+          <div class="mission-foot">
+            <span>Every closure needs</span>
+            <b>OWNER · ARTIFACT · EVIDENCE</b>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Checklist inventory">
+        <article class="metric metric-cyan">
+          <span class="metric-label">TOTAL GATES</span>
+          <strong id="metric-total">—</strong>
+          <small>full release inventory</small>
+        </article>
+        <article class="metric metric-red">
+          <span class="metric-label">P0 GATES</span>
+          <strong id="metric-p0">—</strong>
+          <small>must close or disable</small>
+        </article>
+        <article class="metric metric-amber">
+          <span class="metric-label">DECISIONS</span>
+          <strong id="metric-decisions">—</strong>
+          <small>scope and product calls</small>
+        </article>
+        <article class="metric metric-violet">
+          <span class="metric-label">SYSTEM AREAS</span>
+          <strong id="metric-sections">—</strong>
+          <small>end-to-end coverage</small>
+        </article>
+      </section>
+
+      <section class="collab-strip">
+        <div class="collab-icon" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="collab-copy">
+          <b>The Google Sheet is the live collaborative record.</b>
+          <span>
+            Star Atlas team members can update status, owner, target date,
+            evidence, and notes. This page is the fast browse-and-triage view.
+          </span>
+        </div>
+        <button class="text-link" id="preview-sheet">
+          Preview live tracker <span aria-hidden="true">→</span>
+        </button>
+      </section>
+
+      <section class="workspace" id="checklist">
+        <aside class="rail" aria-label="Checklist sections">
+          <div class="rail-heading">
+            <span>MISSION AREAS</span>
+            <button id="clear-filters" title="Clear filters">Reset</button>
+          </div>
+          <nav id="section-nav"></nav>
+        </aside>
+
+        <div class="board">
+          <div class="board-head">
+            <div>
+              <p class="eyebrow">RELEASE INVENTORY</p>
+              <h2>Readiness gates</h2>
+              <p id="result-summary">Loading checklist…</p>
+            </div>
+            <div class="view-toggle" role="group" aria-label="Display density">
+              <button class="active" data-density="comfortable">Cards</button>
+              <button data-density="compact">Compact</button>
+            </div>
+          </div>
+
+          <div class="filters">
+            <label class="search">
+              <span aria-hidden="true"></span>
+              <input
+                id="search-input"
+                type="search"
+                placeholder="Search gates, systems, PRs…"
+                autocomplete="off"
+              />
+              <kbd>/</kbd>
+            </label>
+            <div class="priority-filter" id="priority-filter" role="group" aria-label="Priority">
+              <button class="active" data-priority="ALL">All</button>
+              <button data-priority="P0">P0</button>
+              <button data-priority="P1">P1</button>
+              <button data-priority="DECISION">Decision</button>
+              <button data-priority="VERIFY">Verify</button>
+              <button data-priority="OPS">Ops</button>
+            </div>
+          </div>
+
+          <div class="active-context" id="active-context" hidden>
+            <span id="active-context-label"></span>
+            <button id="clear-context" aria-label="Clear section filter">×</button>
+          </div>
+
+          <div id="checklist-groups" class="checklist-groups"></div>
+          <div class="empty-state" id="empty-state" hidden>
+            <span aria-hidden="true">⌁</span>
+            <h3>No gates match those filters.</h3>
+            <p>Clear the search or broaden the priority filter.</p>
+            <button class="button button-quiet" id="empty-reset">Reset filters</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>STAR ATLAS · C4 RELEASE CONTROL</span>
+      <span>Baseline is a launch-control starting point, not a readiness claim.</span>
+      <button id="copy-page-link">Copy page link</button>
+    </footer>
+
+    <dialog id="sheet-dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">LIVE COLLABORATION</p>
+          <h2>Team tracker</h2>
+        </div>
+        <div class="dialog-actions">
+          <a id="open-sheet-dialog" target="_blank" rel="noreferrer">
+            Open full screen ↗
+          </a>
+          <button id="close-dialog" aria-label="Close live tracker">×</button>
+        </div>
+      </div>
+      <div class="sheet-frame-wrap">
+        <div class="sheet-loading">Loading the team tracker…</div>
+        <iframe
+          id="sheet-frame"
+          title="C4 mainnet readiness team tracker"
+          loading="lazy"
+        ></iframe>
+      </div>
+      <p class="dialog-note">
+        If Google blocks the embedded editor in your browser, use “Open full
+        screen.” Access is limited to the Star Atlas workspace.
+      </p>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="/checklist-data.js"></script>
+    <script src="/app.js"></script>
+  </body>
+</html>
