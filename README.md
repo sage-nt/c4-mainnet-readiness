@@ -32,3 +32,7 @@ archive flows against the local build.
 
 The deployment artifact is `.open-next/`: a minimal Cloudflare-compatible worker
 plus static assets, with no runtime package dependencies.
+
+For Sites releases, save a `git archive` produced from the exact pushed commit.
+The archive preserves the prebuilt `.open-next/worker.js` entrypoint and avoids
+falling back to the generic source builder.
