@@ -139,9 +139,20 @@
                 <h2>Readiness gates</h2>
                 <p id="result-summary">Loading checklist…</p>
               </div>
-              <div class="view-toggle" role="group" aria-label="Display density">
-                <button class="active" data-density="comfortable">Cards</button>
-                <button data-density="compact">Compact</button>
+              <div class="board-head-actions">
+                <button
+                  class="button button-primary button-new-task"
+                  id="new-task"
+                  type="button"
+                  disabled
+                >
+                  <span aria-hidden="true">＋</span>
+                  New task
+                </button>
+                <div class="view-toggle" role="group" aria-label="Display density">
+                  <button class="active" data-density="comfortable">Cards</button>
+                  <button data-density="compact">Compact</button>
+                </div>
               </div>
             </div>
 
@@ -167,7 +178,7 @@
                 <button data-priority="P1">P1</button>
                 <button data-priority="DECISION">Decision</button>
                 <button data-priority="VERIFY">Verify</button>
-                <button data-priority="OPS">Ops</button>
+                <button data-priority="GATE">Gate</button>
               </div>
               <label class="status-filter">
                 <span>Status</span>
@@ -218,7 +229,10 @@
     >
       <header class="drawer-head">
         <div>
-          <p class="eyebrow"><span>LIVE GATE</span> <b id="drawer-id"></b></p>
+          <p class="eyebrow">
+            <span id="drawer-kicker">LIVE GATE</span>
+            <b id="drawer-id"></b>
+          </p>
           <h2 id="drawer-title">Readiness gate</h2>
         </div>
         <button class="drawer-close" id="drawer-close" aria-label="Close gate">
@@ -227,7 +241,7 @@
       </header>
 
       <div class="drawer-scroll">
-        <div class="drawer-classification">
+        <div class="drawer-classification" id="drawer-classification">
           <span class="priority" id="drawer-priority"></span>
           <span id="drawer-area"></span>
           <span class="status-pill" id="drawer-current-status"></span>
@@ -242,6 +256,61 @@
 
         <form id="gate-form">
           <fieldset id="gate-fields" disabled>
+            <div class="create-task-fields" id="new-task-fields" hidden>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Mission area</span>
+                  <input
+                    id="new-task-area"
+                    name="area"
+                    type="text"
+                    list="gate-area-options"
+                    maxlength="160"
+                    placeholder="Choose or name an area"
+                    disabled
+                    required
+                  />
+                </label>
+                <label class="field">
+                  <span>Priority</span>
+                  <select
+                    id="new-task-priority"
+                    name="priority"
+                    disabled
+                    required
+                  >
+                    <option>P0</option>
+                    <option selected>P1</option>
+                    <option>DECISION</option>
+                    <option>VERIFY</option>
+                    <option>GATE</option>
+                  </select>
+                </label>
+              </div>
+              <label class="field">
+                <span>Task title</span>
+                <input
+                  id="new-task-title"
+                  name="title"
+                  type="text"
+                  maxlength="240"
+                  placeholder="A concrete, verifiable launch task"
+                  disabled
+                  required
+                />
+              </label>
+              <label class="field">
+                <span>Definition / detail</span>
+                <textarea
+                  id="new-task-detail"
+                  name="detail"
+                  rows="4"
+                  maxlength="3000"
+                  placeholder="What must be true, tested, reviewed, or decided?"
+                  disabled
+                ></textarea>
+              </label>
+            </div>
             <div class="form-grid">
               <label class="field">
                 <span>Status</span>
@@ -297,6 +366,14 @@
             <button type="button" id="refresh-gate">Refresh live data</button>
           </div>
           <div class="drawer-actions">
+            <button
+              class="button button-danger"
+              id="remove-gate"
+              type="button"
+              disabled
+            >
+              Remove task
+            </button>
             <a
               class="button button-quiet"
               id="drawer-sheet-link"
@@ -317,6 +394,36 @@
         </form>
       </div>
     </aside>
+
+    <dialog
+      class="confirm-dialog"
+      id="remove-dialog"
+      aria-labelledby="remove-dialog-title"
+      aria-describedby="remove-dialog-detail"
+    >
+      <div class="confirm-dialog-icon" aria-hidden="true">×</div>
+      <p class="eyebrow"><span>ARCHIVE TASK</span> RECOVERABLE</p>
+      <h2 id="remove-dialog-title">Remove this task?</h2>
+      <p id="remove-dialog-detail"></p>
+      <div class="confirm-dialog-note">
+        The task will disappear from the dashboard, but its tracker row and
+        activity history are preserved for recovery.
+      </div>
+      <div class="confirm-dialog-actions">
+        <button class="button button-quiet" id="cancel-remove" type="button">
+          Keep task
+        </button>
+        <button
+          class="button button-danger"
+          id="confirm-remove"
+          type="button"
+        >
+          Archive task
+        </button>
+      </div>
+    </dialog>
+
+    <datalist id="gate-area-options"></datalist>
 
     <iframe
       class="bridge-frame"
