@@ -11,6 +11,7 @@
   const BRIDGE_URL =
     "https://script.google.com/a/macros/staratlas.com/s/AKfycbxESbHQyXuAEHgxNRhTeGRw6MWKy10XFHRG2jYwH6Dafa8k5M-4AIG305-A0o4v0VXq/exec";
   const BRIDGE_CHANNEL = "c4-readiness-tracker";
+  const PRIORITY_VALUES = ["P0", "P1", "DECISION", "VERIFY", "GATE"];
   const STATUS_VALUES = [
     "Not started",
     "In progress",
@@ -21,6 +22,13 @@
     "Done",
   ];
   const sheetUrl = `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit?usp=sharing`;
+  const baselineItems = data.items.map((item) => ({
+    ...item,
+    links: [...item.links],
+  }));
+  const baselineById = new Map(
+    baselineItems.map((item) => [item.id, item]),
+  );
 
   const state = {
     query: "",
@@ -33,6 +41,7 @@
     editor: "",
     connection: "loading",
     activeGate: null,
+    drawerMode: "edit",
     saving: false,
     lastSync: 0,
     returnFocus: null,
@@ -51,7 +60,12 @@
   const gateForm = $("#gate-form");
   const gateFields = $("#gate-fields");
   const saveButton = $("#save-gate");
+  const newTaskButton = $("#new-task");
+  const removeButton = $("#remove-gate");
+  const removeDialog = $("#remove-dialog");
+  const confirmRemoveButton = $("#confirm-remove");
   const toast = $("#toast");
+  let backdropHideTimer = 0;
 
   function escapeHtml(value) {
     return String(value ?? "")
@@ -83,7 +97,7 @@
   }
 
   function sheetViewUrl(row = null) {
-    const range = row ? `&range=A${row}:K${row}` : "";
+    const range = row ? `&range=A${row}:L${row}` : "";
     return (
       `https://docs.google.com/spreadsheets/d/${data.sheet.id}/edit` +
       `#gid=${data.sheet.checklistGid}${range}`
@@ -124,6 +138,77 @@
     return data.items.find((item) => item.id === id) || null;
   }
 
+  function ordinalFor(live, index) {
+    const baseline = baselineById.get(live.id);
+    if (baseline) return baseline.ordinal;
+    const fromId = String(live.id).match(/^C4-(\d+)-/);
+    if (fromId) return Number(fromId[1]);
+    return Number(live.row) > 1 ? Number(live.row) - 1 : index + 1;
+  }
+
+  function inventoryItem(live, index = data.items.length) {
+    const baseline = baselineById.get(live.id);
+    return {
+      id: live.id,
+      ordinal: ordinalFor(live, index),
+      section: live.area || baseline?.section || "Uncategorized",
+      priority: PRIORITY_VALUES.includes(live.priority)
+        ? live.priority
+        : baseline?.priority || "P1",
+      title: live.title || baseline?.title || "Untitled readiness task",
+      detail: live.detail || baseline?.detail || "",
+      links: baseline ? [...baseline.links] : [],
+      baselineChecked: baseline?.baselineChecked || false,
+      sheetRow: Number(live.row) || baseline?.sheetRow || null,
+    };
+  }
+
+  function sortInventory() {
+    data.items.sort(
+      (left, right) =>
+        left.ordinal - right.ordinal ||
+        left.section.localeCompare(right.section) ||
+        left.title.localeCompare(right.title),
+    );
+  }
+
+  function syncInventory(items) {
+    const liveItems = Array.isArray(items) ? items : [];
+    state.tracker = new Map(liveItems.map((item) => [item.id, item]));
+    data.items = liveItems.map(inventoryItem);
+    sortInventory();
+    if (
+      state.section &&
+      !data.items.some((item) => item.section === state.section)
+    ) {
+      state.section = null;
+    }
+  }
+
+  function upsertInventory(live) {
+    const next = inventoryItem(live);
+    const existing = data.items.findIndex((item) => item.id === live.id);
+    if (existing === -1) data.items.push(next);
+    else data.items[existing] = next;
+    state.tracker.set(live.id, live);
+    sortInventory();
+  }
+
+  function removeInventory(id) {
+    data.items = data.items.filter((item) => item.id !== id);
+    state.tracker.delete(id);
+    if (
+      state.section &&
+      !data.items.some((item) => item.section === state.section)
+    ) {
+      state.section = null;
+    }
+  }
+
+  function sectionNames() {
+    return [...new Set(data.items.map((item) => item.section))];
+  }
+
   function formatDate(value) {
     if (!value) return "No target";
     const parsed = new Date(`${value}T12:00:00`);
@@ -147,14 +232,6 @@
     }).format(parsed)}`;
   }
 
-  const sections = [...new Set(data.items.map((item) => item.section))];
-  const counts = Object.fromEntries(
-    sections.map((section) => [
-      section,
-      data.items.filter((item) => item.section === section).length,
-    ]),
-  );
-
   function renderMetrics() {
     const liveItems = data.items.map((item) => ({
       item,
@@ -173,6 +250,13 @@
   }
 
   function renderSectionNav() {
+    const sections = sectionNames();
+    const counts = Object.fromEntries(
+      sections.map((section) => [
+        section,
+        data.items.filter((item) => item.section === section).length,
+      ]),
+    );
     $("#section-nav").innerHTML = sections
       .map(
         (section) => `
@@ -283,6 +367,7 @@
 
   function renderChecklist() {
     const filtered = filteredItems();
+    const sections = sectionNames();
     const visibleSections = sections.filter((section) =>
       filtered.some((item) => item.section === section),
     );
@@ -339,6 +424,9 @@
     renderSectionNav();
     renderChecklist();
     renderControls();
+    $("#gate-area-options").innerHTML = sectionNames()
+      .map((section) => `<option value="${escapeHtml(section)}"></option>`)
+      .join("");
   }
 
   function resetFilters() {
@@ -401,15 +489,60 @@
       state.connection === "ready" && Boolean(state.token) && !state.saving;
     gateFields.disabled = !canEdit;
     saveButton.disabled = !canEdit;
-    saveButton.textContent = state.saving ? "Saving…" : "Save to tracker";
+    newTaskButton.disabled = !canEdit;
+    removeButton.disabled = !canEdit;
+    confirmRemoveButton.disabled = !canEdit;
+    $$("#new-task-fields input, #new-task-fields select, #new-task-fields textarea")
+      .forEach((field) => {
+        field.disabled = !canEdit || state.drawerMode !== "create";
+      });
+    saveButton.textContent = state.saving
+      ? state.drawerMode === "create"
+        ? "Creating…"
+        : "Saving…"
+      : state.drawerMode === "create"
+        ? "Create task"
+        : "Save to tracker";
+    confirmRemoveButton.textContent =
+      state.saving && removeDialog.open ? "Archiving…" : "Archive task";
   }
 
   function renderDrawer() {
+    if (state.drawerMode === "create") {
+      $("#drawer-kicker").textContent = "NEW TASK";
+      $("#drawer-id").textContent = "AUTO ID";
+      $("#drawer-title").textContent = "Create readiness task";
+      $("#drawer-classification").hidden = true;
+      $("#drawer-detail").hidden = true;
+      $("#drawer-links").hidden = true;
+      $("#new-task-fields").hidden = false;
+      $("#new-task-area").value = state.section || "";
+      $("#new-task-priority").value = "P1";
+      $("#new-task-title").value = "";
+      $("#new-task-detail").value = "";
+      $("#gate-status").value = "Not started";
+      $("#gate-owner").value = "";
+      $("#gate-target-date").value = "";
+      $("#gate-evidence").value = "";
+      $("#gate-notes").value = "";
+      $("#drawer-last-updated").textContent =
+        "A new row and audit entry will be created";
+      $("#refresh-gate").hidden = true;
+      $("#drawer-sheet-link").hidden = true;
+      removeButton.hidden = true;
+      renderEditorState();
+      return;
+    }
+
     const item = itemForId(state.activeGate);
     if (!item) return;
     const live = liveFor(item);
+    $("#drawer-kicker").textContent = "LIVE GATE";
     $("#drawer-id").textContent = item.id;
     $("#drawer-title").textContent = item.title;
+    $("#drawer-classification").hidden = false;
+    $("#drawer-detail").hidden = false;
+    $("#new-task-fields").hidden = true;
     const priority = $("#drawer-priority");
     priority.textContent = item.priority;
     priority.className = `priority priority-${item.priority.toLowerCase()}`;
@@ -439,15 +572,36 @@
       live.lastUpdated,
     );
     $("#drawer-sheet-link").href = sheetViewUrl(item.sheetRow);
+    $("#drawer-sheet-link").hidden = false;
+    $("#refresh-gate").hidden = false;
+    removeButton.hidden = false;
     renderEditorState();
   }
 
   function openDrawer(id, trigger = document.activeElement) {
     const item = itemForId(id);
     if (!item) return;
+    state.drawerMode = "edit";
     state.activeGate = id;
     state.returnFocus = trigger;
     renderDrawer();
+    window.clearTimeout(backdropHideTimer);
+    document.body.classList.add("drawer-open");
+    backdropEl.hidden = false;
+    drawerEl.setAttribute("aria-hidden", "false");
+    requestAnimationFrame(() => {
+      backdropEl.classList.add("visible");
+      drawerEl.classList.add("open");
+      $("#drawer-close").focus();
+    });
+  }
+
+  function openCreateDrawer(trigger = document.activeElement) {
+    state.drawerMode = "create";
+    state.activeGate = null;
+    state.returnFocus = trigger;
+    renderDrawer();
+    window.clearTimeout(backdropHideTimer);
     document.body.classList.add("drawer-open");
     backdropEl.hidden = false;
     drawerEl.setAttribute("aria-hidden", "false");
@@ -459,11 +613,12 @@
   }
 
   function closeDrawer() {
+    if (removeDialog.open) removeDialog.close();
     drawerEl.classList.remove("open");
     backdropEl.classList.remove("visible");
     drawerEl.setAttribute("aria-hidden", "true");
     document.body.classList.remove("drawer-open");
-    window.setTimeout(() => {
+    backdropHideTimer = window.setTimeout(() => {
       backdropEl.hidden = true;
     }, 220);
     if (state.returnFocus instanceof HTMLElement) state.returnFocus.focus();
@@ -491,28 +646,26 @@
     }
   }
 
-  function trackBridgeRequest(id, type, timeoutMs = 20000) {
+  function trackBridgeRequest(id, type, payload = null, timeoutMs = 20000) {
     const timer = window.setTimeout(() => {
       pendingBridgeRequests.delete(id);
       if (type === "load") {
         state.connection = "error";
         state.token = "";
         renderSyncState();
-        if (state.activeGate) {
-          renderEditorState(
-            "The tracker did not connect. Sign in with your Star Atlas Google account, then refresh.",
-          );
-        }
+        renderEditorState(
+          "The tracker did not connect. Sign in with your Star Atlas Google account, then refresh.",
+        );
       } else {
         state.saving = false;
         renderSyncState();
         renderEditorState(
-          "The save timed out. Refresh before trying again.",
+          "The tracker operation timed out. Refresh before trying again.",
         );
-        showToast("Save timed out — no change confirmed", "error");
+        showToast("Tracker timed out — no change confirmed", "error");
       }
     }, timeoutMs);
-    pendingBridgeRequests.set(id, { type, timer });
+    pendingBridgeRequests.set(id, { type, payload, timer });
   }
 
   function loadTracker() {
@@ -525,7 +678,7 @@
     state.connection = "loading";
     state.token = "";
     renderSyncState();
-    if (state.activeGate) renderEditorState();
+    renderEditorState();
 
     const id = requestId("load");
     trackBridgeRequest(id, "load");
@@ -535,19 +688,22 @@
     $("#tracker-bridge").src = url.href;
   }
 
-  function saveTracker(payload) {
+  function sendTrackerAction(type, payload) {
     if (!state.token || state.connection !== "ready" || state.saving) return;
     state.saving = true;
     renderSyncState();
     renderEditorState();
 
-    const id = requestId("save");
-    trackBridgeRequest(id, "save");
+    const id = requestId(type);
+    trackBridgeRequest(id, type, payload);
     const form = $("#tracker-bridge-form");
     form.action = BRIDGE_URL;
     form.elements.namedItem("requestId").value = id;
     form.elements.namedItem("token").value = state.token;
-    form.elements.namedItem("payload").value = JSON.stringify(payload);
+    form.elements.namedItem("payload").value = JSON.stringify({
+      action: type,
+      ...payload,
+    });
     form.submit();
   }
 
@@ -565,7 +721,7 @@
         state.connection = "error";
         state.token = "";
         renderSyncState();
-        if (state.activeGate) renderEditorState(message.error);
+        renderEditorState(message.error);
         return;
       }
       state.saving = false;
@@ -577,28 +733,56 @@
 
     if (pending.type === "load") {
       const result = message.result || {};
-      state.tracker = new Map(
-        (result.items || []).map((item) => [item.id, item]),
-      );
+      syncInventory(result.items || []);
       state.token = result.token || "";
       state.editor = result.editor || "";
       state.connection = "ready";
       state.lastSync = Date.now();
       renderSyncState();
+      renderEditorState();
       render();
-      if (state.activeGate) renderDrawer();
+      if (state.activeGate && !itemForId(state.activeGate)) {
+        state.activeGate = null;
+        closeDrawer();
+      } else if (state.activeGate) {
+        renderDrawer();
+      }
       return;
     }
 
     state.saving = false;
+    if (pending.type === "archive") {
+      const archivedId = message.result?.id || pending.payload?.id;
+      if (archivedId) removeInventory(archivedId);
+      state.activeGate = null;
+      removeDialog.close();
+      closeDrawer();
+      state.lastSync = Date.now();
+      renderSyncState();
+      render();
+      renderEditorState();
+      showToast("Task removed from the dashboard");
+      return;
+    }
+
     if (message.result?.id) {
-      state.tracker.set(message.result.id, message.result);
+      if (pending.type === "create") {
+        upsertInventory(message.result);
+        state.drawerMode = "edit";
+        state.activeGate = message.result.id;
+      } else {
+        state.tracker.set(message.result.id, message.result);
+      }
     }
     state.lastSync = Date.now();
     renderSyncState();
     render();
     renderDrawer();
-    showToast("Gate saved to the live tracker");
+    showToast(
+      pending.type === "create"
+        ? "Task added to the live dashboard"
+        : "Gate saved to the live tracker",
+    );
   });
 
   groupsEl.addEventListener("click", (event) => {
@@ -619,10 +803,25 @@
 
   gateForm.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (state.drawerMode === "create") {
+      sendTrackerAction("create", {
+        area: $("#new-task-area").value,
+        priority: $("#new-task-priority").value,
+        title: $("#new-task-title").value,
+        detail: $("#new-task-detail").value,
+        status: $("#gate-status").value,
+        owner: $("#gate-owner").value,
+        targetDate: $("#gate-target-date").value,
+        evidence: $("#gate-evidence").value,
+        notes: $("#gate-notes").value,
+      });
+      return;
+    }
+
     const item = itemForId(state.activeGate);
     if (!item) return;
     const live = liveFor(item);
-    saveTracker({
+    sendTrackerAction("update", {
       id: item.id,
       status: $("#gate-status").value,
       owner: $("#gate-owner").value,
@@ -633,9 +832,38 @@
     });
   });
 
+  function openRemoveDialog() {
+    const item = itemForId(state.activeGate);
+    if (!item || state.drawerMode !== "edit") return;
+    $("#remove-dialog-title").textContent = `Remove ${item.id}?`;
+    $("#remove-dialog-detail").textContent =
+      `“${item.title}” will no longer appear in the release inventory.`;
+    removeDialog.showModal();
+    $("#cancel-remove").focus();
+  }
+
+  function confirmRemove() {
+    const item = itemForId(state.activeGate);
+    if (!item || state.saving) return;
+    const live = liveFor(item);
+    sendTrackerAction("archive", {
+      id: item.id,
+      expectedLastUpdated: live.lastUpdated || "",
+    });
+  }
+
   $("#open-sheet-top").href = sheetUrl;
   $("#drawer-close").addEventListener("click", closeDrawer);
   backdropEl.addEventListener("click", closeDrawer);
+  newTaskButton.addEventListener("click", () =>
+    openCreateDrawer(newTaskButton),
+  );
+  removeButton.addEventListener("click", openRemoveDialog);
+  $("#cancel-remove").addEventListener("click", () => removeDialog.close());
+  confirmRemoveButton.addEventListener("click", confirmRemove);
+  removeDialog.addEventListener("click", (event) => {
+    if (event.target === removeDialog) removeDialog.close();
+  });
   $("#refresh-tracker").addEventListener("click", loadTracker);
   $("#refresh-gate").addEventListener("click", loadTracker);
 
@@ -687,6 +915,7 @@
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && removeDialog.open) return;
     if (event.key === "Escape" && drawerEl.classList.contains("open")) {
       closeDrawer();
       return;

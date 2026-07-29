@@ -124,6 +124,21 @@ async function main() {
   );
   assert.ok(loadRequestId, "bridge load request should be issued");
   await evaluate(`
+    const smokeItems = window.C4_CHECKLIST.items.map((item) => ({
+      row: item.sheetRow,
+      id: item.id,
+      area: item.section,
+      priority: item.priority,
+      title: item.title,
+      detail: item.detail,
+      status: item.id === "C4-001-923CE8BC" ? "In progress" : "Not started",
+      owner: item.id === "C4-001-923CE8BC" ? "Release group" : "",
+      targetDate: item.id === "C4-001-923CE8BC" ? "2026-08-04" : "",
+      evidence: item.id === "C4-001-923CE8BC" ? "https://example.com/proof" : "",
+      notes: item.id === "C4-001-923CE8BC" ? "Browser smoke fixture" : "",
+      lastUpdated: item.id === "C4-001-923CE8BC" ? "2026-07-28 17:40" : "",
+      archived: false
+    }));
     window.dispatchEvent(new MessageEvent("message", {
       origin: "https://smoke-script.googleusercontent.com",
       data: {
@@ -133,20 +148,7 @@ async function main() {
         result: {
           token: "smoke-token",
           editor: "smoke@staratlas.com",
-          items: [{
-            row: 2,
-            id: "C4-001-923CE8BC",
-            area: "Release definition",
-            priority: "P0",
-            title: "Name the launch candidate precisely",
-            detail: "pin commits",
-            status: "In progress",
-            owner: "Release group",
-            targetDate: "2026-08-04",
-            evidence: "https://example.com/proof",
-            notes: "Browser smoke fixture",
-            lastUpdated: "2026-07-28 17:40"
-          }]
+          items: smokeItems
         }
       }
     }));
@@ -226,6 +228,123 @@ async function main() {
     "Done",
     "successful saves should refresh the card",
   );
+
+  await evaluate(`
+    document.querySelector("#drawer-close").click();
+    document.querySelector("#new-task").click();
+  `);
+  await delay(100);
+  assert.equal(
+    await evaluate("document.querySelector('#new-task-fields').hidden"),
+    false,
+    "new task should open the native creation drawer",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('#new-task-title').disabled"),
+    false,
+    "connected collaborators should be able to define a task",
+  );
+
+  await evaluate(`
+    document.querySelector("#new-task-area").value = "Deployment rehearsal";
+    document.querySelector("#new-task-priority").value = "P0";
+    document.querySelector("#new-task-title").value = "Verify task creation";
+    document.querySelector("#new-task-detail").value = "Smoke the native add flow";
+    document.querySelector("#gate-owner").value = "SAGE";
+    document.querySelector("#gate-form").requestSubmit();
+  `);
+  const createSubmitted = await evaluate("window.__bridgeSubmit");
+  const createPayload = JSON.parse(createSubmitted.payload);
+  assert.equal(createPayload.action, "create");
+  assert.equal(createPayload.title, "Verify task creation");
+
+  const createdId = "C4-246-A1B2C3D4";
+  await evaluate(`
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "https://smoke-script.googleusercontent.com",
+      data: {
+        channel: "c4-readiness-tracker",
+        requestId: ${JSON.stringify(createSubmitted.requestId)},
+        ok: true,
+        result: {
+          row: 247,
+          id: ${JSON.stringify(createdId)},
+          area: "Deployment rehearsal",
+          priority: "P0",
+          title: "Verify task creation",
+          detail: "Smoke the native add flow",
+          status: "Not started",
+          owner: "SAGE",
+          targetDate: "",
+          evidence: "",
+          notes: "",
+          lastUpdated: "2026-07-28 18:00",
+          archived: false
+        }
+      }
+    }));
+  `);
+  assert.equal(
+    await evaluate("document.querySelectorAll('.gate').length"),
+    246,
+    "a created task should join the live inventory",
+  );
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-gate-id="${createdId}"] .gate-title').textContent`,
+    ),
+    "Verify task creation",
+  );
+  assert.equal(
+    await evaluate("document.querySelector('#drawer-id').textContent"),
+    createdId,
+    "the new task should transition into the normal gate editor",
+  );
+
+  await evaluate("document.querySelector('#remove-gate').click()");
+  assert.equal(
+    await evaluate("document.querySelector('#remove-dialog').open"),
+    true,
+    "remove should require an explicit confirmation",
+  );
+  await evaluate("document.querySelector('#confirm-remove').click()");
+  const archiveSubmitted = await evaluate("window.__bridgeSubmit");
+  const archivePayload = JSON.parse(archiveSubmitted.payload);
+  assert.equal(archivePayload.action, "archive");
+  assert.equal(archivePayload.id, createdId);
+
+  await evaluate(`
+    window.dispatchEvent(new MessageEvent("message", {
+      origin: "https://smoke-script.googleusercontent.com",
+      data: {
+        channel: "c4-readiness-tracker",
+        requestId: ${JSON.stringify(archiveSubmitted.requestId)},
+        ok: true,
+        result: {
+          id: ${JSON.stringify(createdId)},
+          archived: true,
+          lastUpdated: "2026-07-28 18:01"
+        }
+      }
+    }));
+  `);
+  assert.equal(
+    await evaluate("document.querySelectorAll('.gate').length"),
+    245,
+    "an archived task should disappear without shifting the baseline",
+  );
+  assert.equal(
+    await evaluate(
+      `document.querySelector('[data-gate-id="${createdId}"]') === null`,
+    ),
+    true,
+    "the archived task should no longer render",
+  );
+
+  await evaluate(
+    `document.querySelector('[data-gate-id="C4-001-923CE8BC"]').click()`,
+  );
+  await delay(100);
 
   const image = await client.call("Page.captureScreenshot", {
     format: "png",

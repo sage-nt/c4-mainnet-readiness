@@ -1,5 +1,13 @@
 const CHECKLIST_SHEET = "Checklist";
 const ACTIVITY_SHEET = "Activity";
+const ARCHIVE_COLUMN = 12;
+const ALLOWED_PRIORITIES = new Set([
+  "P0",
+  "P1",
+  "DECISION",
+  "VERIFY",
+  "GATE",
+]);
 const ALLOWED_STATUSES = new Set([
   "Not started",
   "In progress",
@@ -32,7 +40,13 @@ function doPost(event) {
     const payload = JSON.parse(
       (event && event.parameter.payload) || "{}",
     );
-    return bridgeResponse_(requestId, true, updateGate(payload));
+    const action = clean_(payload.action || "update", 20);
+    let result;
+    if (action === "update") result = updateGate(payload);
+    else if (action === "create") result = createGate(payload);
+    else if (action === "archive") result = archiveGate(payload);
+    else throw new Error(`Unsupported tracker action: ${action}`);
+    return bridgeResponse_(requestId, true, result);
   } catch (error) {
     return bridgeResponse_(requestId, false, null, error.message || error);
   }
@@ -44,10 +58,11 @@ function getAllGates() {
   if (lastRow < 2) return [];
 
   return sheet
-    .getRange(2, 1, lastRow - 1, 11)
+    .getRange(2, 1, lastRow - 1, ARCHIVE_COLUMN)
     .getDisplayValues()
-    .filter((row) => row[0])
-    .map((row, index) => rowToGate_(row, index + 2));
+    .map((row, index) => ({ row, rowNumber: index + 2 }))
+    .filter(({ row }) => row[0] && !isArchived_(row[11]))
+    .map(({ row, rowNumber }) => rowToGate_(row, rowNumber));
 }
 
 function updateGate(input) {
@@ -58,18 +73,15 @@ function updateGate(input) {
   try {
     const sheet = getChecklistSheet_();
     const rowNumber = findGateRow_(sheet, payload.id);
-    const current = sheet.getRange(rowNumber, 1, 1, 11).getDisplayValues()[0];
+    const current = sheet
+      .getRange(rowNumber, 1, 1, ARCHIVE_COLUMN)
+      .getDisplayValues()[0];
     const currentGate = rowToGate_(current, rowNumber);
-
-    if (
-      payload.expectedLastUpdated &&
-      currentGate.lastUpdated &&
-      payload.expectedLastUpdated !== currentGate.lastUpdated
-    ) {
-      throw new Error(
-        "This gate changed after you opened it. Refresh the gate before saving.",
-      );
+    if (currentGate.archived) {
+      throw new Error("This task is archived and can no longer be edited.");
     }
+
+    assertFresh_(payload, currentGate);
 
     const before = {
       status: currentGate.status,
@@ -98,10 +110,10 @@ function updateGate(input) {
       .setValues([
         [
           payload.status,
-          payload.owner,
+          cellText_(payload.owner),
           targetDate,
-          payload.evidence,
-          payload.notes,
+          cellText_(payload.evidence),
+          cellText_(payload.notes),
         ],
       ]);
     sheet.getRange(rowNumber, 8).setNumberFormat("yyyy-mm-dd");
@@ -109,11 +121,100 @@ function updateGate(input) {
     sheet.getRange(rowNumber, 11).setNumberFormat("yyyy-mm-dd HH:mm");
     SpreadsheetApp.flush();
 
-    appendActivity_(payload.id, before, payload, updatedAt);
+    appendActivity_(payload.id, before, after, updatedAt, "update");
     const updated = sheet
-      .getRange(rowNumber, 1, 1, 11)
+      .getRange(rowNumber, 1, 1, ARCHIVE_COLUMN)
       .getDisplayValues()[0];
     return rowToGate_(updated, rowNumber);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function createGate(input) {
+  const payload = normalizeCreatePayload_(input);
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(10000);
+
+  try {
+    const sheet = getChecklistSheet_();
+    const identity = nextGateIdentity_(sheet);
+    const rowNumber = sheet.getLastRow() + 1;
+    const targetDate = payload.targetDate
+      ? new Date(`${payload.targetDate}T12:00:00`)
+      : "";
+    const updatedAt = new Date();
+
+    sheet
+      .getRange(rowNumber, 1, 1, ARCHIVE_COLUMN)
+      .setValues([
+        [
+          identity.id,
+          cellText_(payload.area),
+          payload.priority,
+          cellText_(payload.title),
+          cellText_(payload.detail),
+          payload.status,
+          cellText_(payload.owner),
+          targetDate,
+          cellText_(payload.evidence),
+          cellText_(payload.notes),
+          updatedAt,
+          false,
+        ],
+      ]);
+    sheet.getRange(rowNumber, 8).setNumberFormat("yyyy-mm-dd");
+    sheet.getRange(rowNumber, 11).setNumberFormat("yyyy-mm-dd HH:mm");
+    SpreadsheetApp.flush();
+
+    const created = rowToGate_(
+      sheet
+        .getRange(rowNumber, 1, 1, ARCHIVE_COLUMN)
+        .getDisplayValues()[0],
+      rowNumber,
+    );
+    appendActivity_(created.id, null, created, updatedAt, "create");
+    return created;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function archiveGate(input) {
+  const payload = normalizeIdentityPayload_(input);
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(10000);
+
+  try {
+    const sheet = getChecklistSheet_();
+    const rowNumber = findGateRow_(sheet, payload.id);
+    const current = sheet
+      .getRange(rowNumber, 1, 1, ARCHIVE_COLUMN)
+      .getDisplayValues()[0];
+    const currentGate = rowToGate_(current, rowNumber);
+    if (currentGate.archived) return currentGate;
+    assertFresh_(payload, currentGate);
+
+    const updatedAt = new Date();
+    sheet.getRange(rowNumber, 11).setValue(updatedAt);
+    sheet.getRange(rowNumber, 11).setNumberFormat("yyyy-mm-dd HH:mm");
+    sheet.getRange(rowNumber, ARCHIVE_COLUMN).setValue(true);
+    SpreadsheetApp.flush();
+
+    const archived = rowToGate_(
+      sheet
+        .getRange(rowNumber, 1, 1, ARCHIVE_COLUMN)
+        .getDisplayValues()[0],
+      rowNumber,
+    );
+    appendActivity_(
+      payload.id,
+      currentGate,
+      archived,
+      updatedAt,
+      "archive",
+    );
+    return archived;
   } finally {
     lock.releaseLock();
   }
@@ -124,7 +225,23 @@ function getChecklistSheet_() {
     CHECKLIST_SHEET,
   );
   if (!sheet) throw new Error(`Missing ${CHECKLIST_SHEET} sheet.`);
+  ensureArchiveColumn_(sheet);
   return sheet;
+}
+
+function ensureArchiveColumn_(sheet) {
+  const header = String(
+    sheet.getRange(1, ARCHIVE_COLUMN).getValue() || "",
+  ).trim();
+  if (header && header !== "Archived") {
+    throw new Error(
+      "Checklist column L is already in use; expected the Archived field.",
+    );
+  }
+  if (!header) {
+    sheet.getRange(1, ARCHIVE_COLUMN).setValue("Archived");
+    sheet.getRange(1, ARCHIVE_COLUMN).setFontWeight("bold");
+  }
 }
 
 function findGateRow_(sheet, id) {
@@ -153,7 +270,14 @@ function rowToGate_(row, rowNumber) {
     evidence: row[8] || "",
     notes: row[9] || "",
     lastUpdated: row[10] || "",
+    archived: isArchived_(row[11]),
   };
+}
+
+function isArchived_(value) {
+  return ["true", "yes", "1", "archived"].includes(
+    String(value || "").trim().toLowerCase(),
+  );
 }
 
 function normalizePayload_(input) {
@@ -165,7 +289,7 @@ function normalizePayload_(input) {
     id: clean_(input.id, 80),
     status: clean_(input.status, 40),
     owner: clean_(input.owner, 120),
-    targetDate: clean_(input.targetDate, 10),
+    targetDate: normalizeDate_(input.targetDate),
     evidence: clean_(input.evidence, 3000),
     notes: clean_(input.notes, 6000),
     expectedLastUpdated: clean_(input.expectedLastUpdated, 40),
@@ -175,13 +299,104 @@ function normalizePayload_(input) {
   if (!ALLOWED_STATUSES.has(payload.status)) {
     throw new Error(`Invalid status: ${payload.status}`);
   }
-  if (
-    payload.targetDate &&
-    !/^\d{4}-\d{2}-\d{2}$/.test(payload.targetDate)
-  ) {
-    throw new Error("Target date must use YYYY-MM-DD.");
+  return payload;
+}
+
+function normalizeCreatePayload_(input) {
+  if (!input || typeof input !== "object") {
+    throw new Error("Missing new task.");
+  }
+  const payload = {
+    area: clean_(input.area, 160),
+    priority: clean_(input.priority, 20),
+    title: clean_(input.title, 240),
+    detail: clean_(input.detail, 3000),
+    status: clean_(input.status || "Not started", 40),
+    owner: clean_(input.owner, 120),
+    targetDate: normalizeDate_(input.targetDate),
+    evidence: clean_(input.evidence, 3000),
+    notes: clean_(input.notes, 6000),
+  };
+  if (!payload.area) throw new Error("A mission area is required.");
+  if (!payload.title) throw new Error("A task title is required.");
+  if (!ALLOWED_PRIORITIES.has(payload.priority)) {
+    throw new Error(`Invalid priority: ${payload.priority}`);
+  }
+  if (!ALLOWED_STATUSES.has(payload.status)) {
+    throw new Error(`Invalid status: ${payload.status}`);
   }
   return payload;
+}
+
+function normalizeIdentityPayload_(input) {
+  if (!input || typeof input !== "object") {
+    throw new Error("Missing task identity.");
+  }
+  const payload = {
+    id: clean_(input.id, 80),
+    expectedLastUpdated: clean_(input.expectedLastUpdated, 40),
+  };
+  if (!payload.id) throw new Error("Missing gate ID.");
+  return payload;
+}
+
+function normalizeDate_(value) {
+  const text = clean_(value, 10);
+  if (!text) return "";
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) throw new Error("Target date must use YYYY-MM-DD.");
+  const date = new Date(`${text}T12:00:00`);
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== Number(match[1]) ||
+    date.getMonth() + 1 !== Number(match[2]) ||
+    date.getDate() !== Number(match[3])
+  ) {
+    throw new Error("Target date is not a valid calendar date.");
+  }
+  return text;
+}
+
+function assertFresh_(payload, currentGate) {
+  if (
+    payload.expectedLastUpdated &&
+    currentGate.lastUpdated &&
+    payload.expectedLastUpdated !== currentGate.lastUpdated
+  ) {
+    throw new Error(
+      "This gate changed after you opened it. Refresh the gate before saving.",
+    );
+  }
+}
+
+function nextGateIdentity_(sheet) {
+  const lastRow = sheet.getLastRow();
+  const ids =
+    lastRow < 2
+      ? []
+      : sheet
+          .getRange(2, 1, lastRow - 1, 1)
+          .getDisplayValues()
+          .flat();
+  const ordinal =
+    ids.reduce((max, id) => {
+      const match = String(id).match(/^C4-(\d+)-/);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0) + 1;
+  let id;
+  do {
+    const suffix = Utilities.getUuid()
+      .replace(/-/g, "")
+      .slice(0, 8)
+      .toUpperCase();
+    id = `C4-${String(ordinal).padStart(3, "0")}-${suffix}`;
+  } while (ids.includes(id));
+  return { id, ordinal };
+}
+
+function cellText_(value) {
+  const text = String(value == null ? "" : value);
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
 function clean_(value, maxLength) {
@@ -242,7 +457,7 @@ function normalizeDisplayDate_(value) {
   );
 }
 
-function appendActivity_(id, before, after, timestamp) {
+function appendActivity_(id, before, after, timestamp, operation) {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   let sheet = spreadsheet.getSheetByName(ACTIVITY_SHEET);
   if (!sheet) {
@@ -261,13 +476,7 @@ function appendActivity_(id, before, after, timestamp) {
     Session.getActiveUser().getEmail() || "Star Atlas collaborator",
     id,
     JSON.stringify(before),
-    JSON.stringify({
-      status: after.status,
-      owner: after.owner,
-      targetDate: after.targetDate,
-      evidence: after.evidence,
-      notes: after.notes,
-    }),
-    "C4 readiness dashboard",
+    JSON.stringify(after),
+    `C4 readiness dashboard · ${operation || "update"}`,
   ]);
 }

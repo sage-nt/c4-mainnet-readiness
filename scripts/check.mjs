@@ -48,6 +48,10 @@ for (const marker of [
   'id="gate-owner"',
   'id="tracker-bridge"',
   'id="tracker-bridge-form"',
+  'id="new-task"',
+  'id="new-task-fields"',
+  'id="remove-gate"',
+  'id="remove-dialog"',
 ]) {
   if (!html.includes(marker)) {
     throw new Error(`native tracker markup missing: ${marker}`);
@@ -59,8 +63,12 @@ for (const marker of [
   "AKfycbxESbHQyXuAEHgxNRhTeGRw6MWKy10XFHRG2jYwH6Dafa8k5M-4AIG305-A0o4v0VXq",
   "expectedLastUpdated",
   "function openDrawer",
+  "function openCreateDrawer",
+  'sendTrackerAction("create"',
+  'sendTrackerAction("archive"',
   "tracker-bridge-form",
-  "Gate saved to the live tracker",
+  "Task added to the live dashboard",
+  "Task removed from the dashboard",
 ]) {
   if (!app.includes(marker)) {
     throw new Error(`native tracker behavior missing: ${marker}`);
@@ -91,6 +99,11 @@ for (const marker of [
   "expectedLastUpdated",
   "LockService.getDocumentLock()",
   "JSON.stringify(before) === JSON.stringify(after)",
+  'action === "create"',
+  'action === "archive"',
+  "ensureArchiveColumn_",
+  "nextGateIdentity_",
+  "isArchived_",
   "appendActivity_",
 ]) {
   if (!bridgeCode.includes(marker)) {
